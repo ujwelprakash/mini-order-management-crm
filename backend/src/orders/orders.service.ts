@@ -1,3 +1,4 @@
+
 import {
   BadRequestException,
   Injectable,
@@ -42,6 +43,9 @@ export class OrdersService {
       throw new BadRequestException('sortOrder must be asc or desc');
     }
 
+    // Normalize search input
+    const searchTerm = search.trim().replace(/^#/, '');
+
     // Validate dates
     const parsedStartDate = startDate
       ? new Date(`${startDate}T00:00:00.000Z`)
@@ -66,11 +70,17 @@ export class OrdersService {
 
     // Build database filters
     const where = {
-      ...(search && {
+      ...(searchTerm && {
         OR: [
           {
             orderNumber: {
-              contains: search,
+              contains: searchTerm,
+              mode: 'insensitive' as const,
+            },
+          },
+          {
+            customerName: {
+              contains: searchTerm,
               mode: 'insensitive' as const,
             },
           },
@@ -78,17 +88,7 @@ export class OrdersService {
             customer: {
               is: {
                 name: {
-                  contains: search,
-                  mode: 'insensitive' as const,
-                },
-              },
-            },
-          },
-          {
-            customer: {
-              is: {
-                email: {
-                  contains: search,
+                  contains: searchTerm,
                   mode: 'insensitive' as const,
                 },
               },
@@ -107,29 +107,37 @@ export class OrdersService {
             gte: parsedStartDate,
           }),
           ...(parsedEndDate && {
-            lt: new Date(parsedEndDate.getTime() + 24 * 60 * 60 * 1000),
+            lt: new Date(
+              parsedEndDate.getTime() + 24 * 60 * 60 * 1000,
+            ),
           }),
         },
       }),
     };
 
     // Fetch orders and total count
-    const [orders, total] = await this.prisma.$transaction([
-      this.prisma.order.findMany({
-        where,
-        skip,
-        take: limit,
-        include: {
-          customer: true,
-          items: true,
-        },
-        orderBy: {
-          [sortBy]: sortOrder,
-        },
-      }),
+    const [orders, total] = await this.prisma.$transaction(
+      [
+        this.prisma.order.findMany({
+          where,
+          skip,
+          take: limit,
+          include: {
+            customer: true,
+            items: true,
+          },
+          orderBy: {
+            [sortBy]: sortOrder,
+          },
+        }),
 
-      this.prisma.order.count({ where }),
-    ]);
+        this.prisma.order.count({ where }),
+      ],
+      {
+        maxWait: 10000,
+        timeout: 20000,
+      },
+    );
 
     return {
       orders,

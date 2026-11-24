@@ -37,10 +37,11 @@ export class WebhooksService {
     private readonly prisma: PrismaService,
   ) {}
 
+  // Verify Shopify webhook HMAC signature
   verifyWebhook(rawBody: Buffer, receivedHmac: string): boolean {
     try {
       const secret = this.configService.getOrThrow<string>(
-        'SHOPIFY_CLIENT_SECRET',
+        'SHOPIFY_WEBHOOK_SECRET',
       );
 
       if (!receivedHmac || !/^[A-Za-z0-9+/]+={0,2}$/.test(receivedHmac)) {
@@ -63,12 +64,29 @@ export class WebhooksService {
     }
   }
 
+  // Normalize Shopify order IDs to GraphQL GID format
+  private normalizeShopifyOrderId(id: number | string): string {
+    const value = String(id);
+
+    if (value.startsWith('gid://shopify/Order/')) {
+      return value;
+    }
+
+    return `gid://shopify/Order/${value}`;
+  }
+
   async processOrderWebhook(
     webhookId: string,
     topic: string,
     payload: ShopifyOrderWebhookPayload,
   ) {
-    if (!payload || !payload.id || !payload.total_price || !payload.currency) {
+    if (
+      !payload ||
+      payload.id === undefined ||
+      payload.id === null ||
+      !payload.total_price ||
+      !payload.currency
+    ) {
       throw new InternalServerErrorException(
         'Invalid Shopify order webhook payload',
       );
@@ -83,7 +101,7 @@ export class WebhooksService {
       create: { shopDomain },
     });
 
-    // Check whether this webhook has already been received.
+    // Check whether this webhook has already been received
     let existingEvent = await this.prisma.webhookEvent.findUnique({
       where: { webhookId },
     });
@@ -95,7 +113,7 @@ export class WebhooksService {
       };
     }
 
-    // Create a new event if this is the first delivery.
+    // Create a new event if this is the first delivery
     if (!existingEvent) {
       try {
         await this.prisma.webhookEvent.create({
@@ -129,7 +147,9 @@ export class WebhooksService {
     }
 
     try {
-      const shopifyOrderId = String(payload.id);
+      const rawShopifyOrderId = String(payload.id);
+
+      const normalizedShopifyOrderId = this.normalizeShopifyOrderId(payload.id);
 
       const orderDate = payload.created_at
         ? new Date(payload.created_at)
@@ -142,7 +162,7 @@ export class WebhooksService {
       await this.prisma.$transaction(async (tx) => {
         let customerId: string | null = null;
 
-        // Save the customer if Shopify included one.
+        // Save customer information
         if (payload.customer?.id) {
           const customer = payload.customer;
 
@@ -174,7 +194,25 @@ export class WebhooksService {
           customerId = savedCustomer.id;
         }
 
-        // Create or update the exact order received in this webhook.
+        // Support both previously saved numeric IDs and GraphQL GIDs.
+        const existingOrder = await tx.order.findFirst({
+          where: {
+            storeId: store.id,
+            shopifyOrderId: {
+              in: [rawShopifyOrderId, normalizedShopifyOrderId],
+            },
+          },
+          select: {
+            shopifyOrderId: true,
+          },
+        });
+
+        // Preserve the existing ID when an order already exists.
+        // New webhook orders use the normalized GraphQL GID.
+        const shopifyOrderId =
+          existingOrder?.shopifyOrderId ?? normalizedShopifyOrderId;
+
+        // Create or update the order
         const savedOrder = await tx.order.upsert({
           where: {
             storeId_shopifyOrderId: {
@@ -212,9 +250,11 @@ export class WebhooksService {
           },
         });
 
-        // Replace line items so updates do not create duplicates.
+        // Replace line items to prevent duplicates
         await tx.orderItem.deleteMany({
-          where: { orderId: savedOrder.id },
+          where: {
+            orderId: savedOrder.id,
+          },
         });
 
         const lineItems = payload.line_items || [];
@@ -232,7 +272,7 @@ export class WebhooksService {
         }
       });
 
-      // Mark the event as successfully processed.
+      // Mark webhook event as successfully processed
       await this.prisma.webhookEvent.update({
         where: { webhookId },
         data: {
@@ -248,7 +288,7 @@ export class WebhooksService {
     } catch (error) {
       console.error('Webhook processing failed:', error);
 
-      // Keep processed=false so a retry can process the event again.
+      // Keep processed=false so Shopify can retry
       throw new InternalServerErrorException(
         'Webhook received but order synchronization failed',
       );

@@ -2,7 +2,12 @@ import {
   Injectable,
   InternalServerErrorException,
   BadRequestException,
+  BadGatewayException,
+  ServiceUnavailableException,
+  HttpException,
+  Logger,
 } from '@nestjs/common';
+
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service.js';
 
@@ -25,6 +30,7 @@ interface CreateOrderInput {
 export class ShopifyService {
   private accessToken: string | null = null;
   private tokenExpiresAt = 0;
+  private readonly logger = new Logger(ShopifyService.name);
 
   constructor(
     private readonly configService: ConfigService,
@@ -60,33 +66,49 @@ export class ShopifyService {
         body,
       });
 
+      if (response.status === 429) {
+        throw new ServiceUnavailableException(
+          'Shopify rate limit reached. Please try again shortly.',
+        );
+      }
+
       if (!response.ok) {
-        throw new Error(`Shopify returned HTTP ${response.status}`);
+        this.logger.error(
+          `Shopify authentication returned HTTP ${response.status}`,
+        );
+
+        throw new BadGatewayException('Unable to authenticate with Shopify.');
       }
 
       const data = (await response.json()) as ShopifyTokenResponse;
 
       if (!data.access_token || !data.expires_in) {
-        throw new Error('Invalid token response from Shopify');
+        throw new BadGatewayException(
+          'Invalid authentication response from Shopify.',
+        );
       }
 
       this.accessToken = data.access_token;
       this.tokenExpiresAt = Date.now() + data.expires_in * 1000 - 60_000;
 
-      console.log('Shopify access token obtained successfully');
+      this.logger.log('Shopify access token obtained successfully');
 
       return this.accessToken;
     } catch (error) {
       this.accessToken = null;
       this.tokenExpiresAt = 0;
 
-      console.error(
-        'Shopify authentication failed:',
-        error instanceof Error ? error.message : 'Unknown error',
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      this.logger.error(
+        'Shopify authentication failed',
+        error instanceof Error ? error.stack : String(error),
       );
 
-      throw new InternalServerErrorException(
-        'Unable to authenticate with Shopify',
+      throw new ServiceUnavailableException(
+        'Unable to connect to Shopify authentication service.',
       );
     }
   }
@@ -111,8 +133,16 @@ export class ShopifyService {
         body: JSON.stringify({ query, variables }),
       });
 
+      if (response.status === 429) {
+        throw new ServiceUnavailableException(
+          'Shopify rate limit reached. Please try again shortly.',
+        );
+      }
+
       if (!response.ok) {
-        throw new Error(`Shopify API returned HTTP ${response.status}`);
+        this.logger.error(`Shopify API returned HTTP ${response.status}`);
+
+        throw new BadGatewayException('Shopify API request failed.');
       }
 
       const result = (await response.json()) as {
@@ -121,23 +151,31 @@ export class ShopifyService {
       };
 
       if (result.errors?.length || !result.data) {
-        const message =
-          result.errors?.map((error) => error.message).join('; ') ||
-          'Invalid Shopify GraphQL response';
+        this.logger.error(
+          `Shopify GraphQL error: ${
+            result.errors?.map((error) => error.message).join('; ') ||
+            'Invalid Shopify response'
+          }`,
+        );
 
-        console.error('Shopify GraphQL error:', message);
-        throw new Error(message);
+        throw new BadGatewayException(
+          'Shopify returned an error processing the request.',
+        );
       }
 
       return result.data;
     } catch (error) {
-      console.error(
-        'Shopify GraphQL request failed:',
-        error instanceof Error ? error.message : 'Unknown error',
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      this.logger.error(
+        'Shopify network request failed',
+        error instanceof Error ? error.stack : String(error),
       );
 
-      throw new InternalServerErrorException(
-        error instanceof Error ? error.message : 'Shopify request failed',
+      throw new ServiceUnavailableException(
+        'Unable to connect to Shopify. Please try again later.',
       );
     }
   }
@@ -192,7 +230,7 @@ export class ShopifyService {
       orders: { edges: { node: any }[] };
     }>(query);
 
-    console.log('Shopify orders fetched successfully');
+    this.logger.log('Shopify orders fetched successfully');
 
     return data.orders;
   }
@@ -405,10 +443,18 @@ export class ShopifyService {
       );
     }
 
-    // Step 4: Save completed order in PostgreSQL
-    const savedOrderId = await this.saveOrder(orderData.order);
+    // Step 4: Save completed order in PostgreSQL.
+    // Include CRM-entered customer details because Shopify
+    // may not return a linked customer object.
+    const savedOrderId = await this.saveOrder({
+      ...orderData.order,
+      customerName,
+      customerEmail,
+    });
 
-    console.log(`Shopify order ${orderData.order.name} saved in PostgreSQL`);
+    this.logger.log(
+      `Shopify order ${orderData.order.name} saved in PostgreSQL`,
+    );
 
     return {
       success: true,
@@ -437,12 +483,18 @@ export class ShopifyService {
       let customerId: string | null = null;
       const shopifyCustomer = order.customer;
 
-      if (shopifyCustomer?.id) {
-        const customerName =
-          [shopifyCustomer.firstName, shopifyCustomer.lastName]
+      const shopifyCustomerName = shopifyCustomer
+        ? [shopifyCustomer.firstName, shopifyCustomer.lastName]
             .filter(Boolean)
-            .join(' ') || null;
+            .join(' ') || null
+        : null;
 
+      // Prefer CRM-entered details; otherwise use Shopify customer details.
+      const customerName = order.customerName ?? shopifyCustomerName;
+      const customerEmail =
+        order.customerEmail ?? shopifyCustomer?.email ?? null;
+
+      if (shopifyCustomer?.id) {
         const customer = await tx.customer.upsert({
           where: {
             storeId_shopifyCustomerId: {
@@ -451,15 +503,14 @@ export class ShopifyService {
             },
           },
           update: {
-            name: customerName,
+            name: shopifyCustomerName,
             email: shopifyCustomer.email ?? null,
-            // Phone access is not approved, so do not request or store it.
             phone: null,
           },
           create: {
             storeId: store.id,
             shopifyCustomerId: shopifyCustomer.id,
-            name: customerName,
+            name: shopifyCustomerName,
             email: shopifyCustomer.email ?? null,
             phone: null,
           },
@@ -483,6 +534,8 @@ export class ShopifyService {
           totalAmount: order.totalPriceSet.shopMoney.amount,
           currency: order.totalPriceSet.shopMoney.currencyCode,
           customerId,
+          customerName: customerName ?? undefined,
+          customerEmail: customerEmail ?? undefined,
         },
         create: {
           storeId: store.id,
@@ -494,6 +547,8 @@ export class ShopifyService {
           totalAmount: order.totalPriceSet.shopMoney.amount,
           currency: order.totalPriceSet.shopMoney.currencyCode,
           customerId,
+          customerName,
+          customerEmail,
         },
       });
 
@@ -537,10 +592,14 @@ export class ShopifyService {
         syncedCount,
       };
     } catch (error) {
-      console.error(
-        'Order synchronization failed:',
-        error instanceof Error ? error.message : 'Unknown error',
+      this.logger.error(
+        'Order synchronization failed',
+        error instanceof Error ? error.stack : String(error),
       );
+
+      if (error instanceof HttpException) {
+        throw error;
+      }
 
       throw new InternalServerErrorException(
         'Unable to synchronize Shopify orders',
