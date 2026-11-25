@@ -8,6 +8,7 @@ function OrderTable({
   error = "",
   onRetry,
   onViewOrder,
+  showViewButton = true,
 }) {
   if (loading) {
     return (
@@ -46,7 +47,8 @@ function OrderTable({
             <th className="px-6 py-4">Amount</th>
             <th className="px-6 py-4">Payment</th>
             <th className="px-6 py-4">Fulfillment</th>
-            <th className="px-6 py-4">Action</th>
+
+            {showViewButton && <th className="px-6 py-4">Action</th>}
           </tr>
         </thead>
 
@@ -89,22 +91,24 @@ function OrderTable({
                   <StatusBadge status={order.fulfillmentStatus} />
                 </td>
 
-                <td className="px-6 py-4">
-                  <button
-                    type="button"
-                    onClick={() => onViewOrder?.(order.id)}
-                    disabled={!order.id || !onViewOrder}
-                    className="rounded-md px-3 py-1.5 text-sm font-medium text-blue-600 transition hover:bg-blue-50 hover:text-blue-800 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-blue-900/20"
-                  >
-                    View
-                  </button>
-                </td>
+                {showViewButton && (
+                  <td className="px-6 py-4">
+                    <button
+                      type="button"
+                      onClick={() => onViewOrder?.(order.id)}
+                      disabled={!order.id || !onViewOrder}
+                      className="rounded-md px-3 py-1.5 text-sm font-medium text-blue-600 transition hover:bg-blue-50 hover:text-blue-800 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-blue-900/20"
+                    >
+                      View
+                    </button>
+                  </td>
+                )}
               </tr>
             ))
           ) : (
             <tr>
               <td
-                colSpan={7}
+                colSpan={showViewButton ? 7 : 6}
                 className="py-16 text-center text-sm text-slate-500 dark:text-slate-400"
               >
                 No orders found.

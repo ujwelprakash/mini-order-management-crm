@@ -9,6 +9,13 @@ import { OrdersQueryDto } from './dto/orders-query.dto.js';
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
+  // GET ORDER STATISTICS FOR DASHBOARD
+  @Get('stats')
+  getStats() {
+    return this.ordersService.getStats();
+  }
+
+  // GET ALL ORDERS
   @Get()
   findAll(@Query() query: OrdersQueryDto) {
     return this.ordersService.findAll(
@@ -24,6 +31,7 @@ export class OrdersController {
     );
   }
 
+  // GET SINGLE ORDER BY DATABASE ID
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.ordersService.findOne(id);

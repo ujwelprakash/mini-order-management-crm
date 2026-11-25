@@ -1,4 +1,3 @@
-
 import {
   BadRequestException,
   Injectable,
@@ -107,9 +106,7 @@ export class OrdersService {
             gte: parsedStartDate,
           }),
           ...(parsedEndDate && {
-            lt: new Date(
-              parsedEndDate.getTime() + 24 * 60 * 60 * 1000,
-            ),
+            lt: new Date(parsedEndDate.getTime() + 24 * 60 * 60 * 1000),
           }),
         },
       }),
@@ -151,6 +148,39 @@ export class OrdersService {
         sortBy,
         sortOrder,
       },
+    };
+  }
+
+  // GET ORDER STATISTICS FOR DASHBOARD
+  async getStats() {
+    const [totalOrders, paidOrders, pendingOrders, fulfilledOrders] =
+      await this.prisma.$transaction([
+        this.prisma.order.count(),
+
+        this.prisma.order.count({
+          where: {
+            financialStatus: 'PAID',
+          },
+        }),
+
+        this.prisma.order.count({
+          where: {
+            financialStatus: 'PENDING',
+          },
+        }),
+
+        this.prisma.order.count({
+          where: {
+            fulfillmentStatus: 'FULFILLED',
+          },
+        }),
+      ]);
+
+    return {
+      totalOrders,
+      paidOrders,
+      pendingOrders,
+      fulfilledOrders,
     };
   }
 

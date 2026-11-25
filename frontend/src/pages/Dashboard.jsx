@@ -2,68 +2,58 @@ import { useCallback, useEffect, useState } from "react";
 
 import OrderTable from "../components/OrderTable";
 import { apiRequest } from "../services/api";
-import formatCurrency from "../utils/formatCurrency";
-import formatDate from "../utils/formatDate";
 
 function Dashboard() {
   const [orders, setOrders] = useState([]);
+  const [statsData, setStatsData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const fetchRecentOrders = useCallback(async () => {
+  const fetchDashboard = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
 
-      const data = await apiRequest(
-        "/orders?page=1&limit=5&sortBy=orderDate&sortOrder=desc",
-      );
+      const [ordersResponse, statsResponse] = await Promise.all([
+        apiRequest("/orders?page=1&limit=5&sortBy=orderDate&sortOrder=desc"),
+        apiRequest("/orders/stats"),
+      ]);
 
-      setOrders(data.orders || []);
+      setOrders(ordersResponse.orders || []);
+      setStatsData(statsResponse);
     } catch (err) {
       setError(err.message || "Failed to load dashboard");
       setOrders([]);
+      setStatsData(null);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchRecentOrders();
-  }, [fetchRecentOrders]);
-
-  const paidOrders = orders.filter(
-    (order) => order.financialStatus?.toUpperCase() === "PAID",
-  ).length;
-
-  const pendingOrders = orders.filter(
-    (order) => order.financialStatus?.toUpperCase() === "PENDING",
-  ).length;
-
-  const fulfilledOrders = orders.filter(
-    (order) => order.fulfillmentStatus?.toUpperCase() === "FULFILLED",
-  ).length;
+    fetchDashboard();
+  }, [fetchDashboard]);
 
   const stats = [
     {
-      title: "Recent Orders",
-      value: orders.length,
-      description: "Latest 5 orders",
+      title: "Total Orders",
+      value: statsData?.totalOrders ?? 0,
+      description: "All orders",
     },
     {
       title: "Paid Orders",
-      value: paidOrders,
-      description: "In the latest 5 orders",
+      value: statsData?.paidOrders ?? 0,
+      description: "Across all orders",
     },
     {
       title: "Pending Payments",
-      value: pendingOrders,
-      description: "In the latest 5 orders",
+      value: statsData?.pendingOrders ?? 0,
+      description: "Across all orders",
     },
     {
       title: "Fulfilled Orders",
-      value: fulfilledOrders,
-      description: "In the latest 5 orders",
+      value: statsData?.fulfilledOrders ?? 0,
+      description: "Across all orders",
     },
   ];
 
@@ -77,13 +67,13 @@ function Dashboard() {
           </h1>
 
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Overview of your recent Shopify orders.
+            Overview of your Shopify orders.
           </p>
         </div>
 
         <button
           type="button"
-          onClick={fetchRecentOrders}
+          onClick={fetchDashboard}
           disabled={loading}
           className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
         >
@@ -98,7 +88,7 @@ function Dashboard() {
 
           <button
             type="button"
-            onClick={fetchRecentOrders}
+            onClick={fetchDashboard}
             className="font-semibold underline"
           >
             Try again
@@ -136,7 +126,7 @@ function Dashboard() {
           </h2>
 
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Your latest Shopify orders.
+            Your latest 5 Shopify orders.
           </p>
         </div>
 
@@ -144,8 +134,8 @@ function Dashboard() {
           orders={orders}
           loading={loading}
           error={error}
-          onRetry={fetchRecentOrders}
-          onViewOrder={() => {}}
+          onRetry={fetchDashboard}
+          showViewButton={false}
         />
       </div>
     </div>

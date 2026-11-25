@@ -15,29 +15,42 @@ function Header({
     .toUpperCase();
 
   return (
-    <header className="flex min-h-20 items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900">{activeNav}</h1>
+    <header className="flex min-h-20 items-center justify-between border-b border-slate-200 bg-white px-4 py-4 sm:px-6">
+      {/* Page title */}
+      <div className="min-w-0">
+        <h1 className="truncate text-xl font-semibold tracking-tight text-slate-900">
+          {activeNav}
+        </h1>
+
         <p className="mt-1 text-sm text-slate-500">Manage your Shopify store</p>
       </div>
 
-      <div className="flex items-center gap-4">
+      {/* User section */}
+      <div className="ml-4 flex shrink-0 items-center gap-3 sm:gap-4">
+        {/* User information */}
         <div className="hidden text-right sm:block">
-          <p className="text-sm font-semibold text-slate-800">{userName}</p>
-          <p className="text-xs text-slate-500">{userEmail}</p>
+          <p className="text-sm font-medium text-slate-800">{userName}</p>
+
+          {userEmail && (
+            <p className="mt-0.5 max-w-48 truncate text-xs text-slate-500">
+              {userEmail}
+            </p>
+          )}
         </div>
 
+        {/* Avatar */}
         <div
-          className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 text-sm font-semibold text-blue-700"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-50 text-sm font-semibold text-blue-700 ring-1 ring-blue-100"
           aria-label={`User avatar for ${userName}`}
         >
           {initials || "U"}
         </div>
 
+        {/* Logout */}
         <button
           type="button"
           onClick={onLogout}
-          className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
         >
           Logout
         </button>
